@@ -1,6 +1,6 @@
 # Recon Pipeline
 
-A step-by-step bug bounty recon workflow: subdomain enumeration → resolve/probe → crawl → JS/API/params → fuzzing → secrets.
+A step-by-step bug bounty recon workflow: subdomain enumeration → resolve/probe → screenshots/takeover checks → crawl → JS/API/params → fuzzing → vulnerability scanning → secrets.
 
 ## Pipeline Overview
 
@@ -16,6 +16,7 @@ flowchart TD
 
     SF & AM & AF & FD & CH & SL & CRT --> ALLSUB[all_subdomains.txt]
     ALLSUB --> DNSX[DNSx]
+    ALLSUB --> SUBZY[Subzy - Takeover Check]
     DNSX --> HOSTS[hosts.txt]
 
     HOSTS --> HTTPX[HTTPx]
@@ -23,6 +24,7 @@ flowchart TD
     HOSTS --> TLSX[TLSx]
 
     HTTPX --> URLS[urls.txt]
+    URLS --> GOWIT[GoWitness - Screenshots]
 
     URLS --> GAU[GAU]
     URLS --> WB[Wayback]
@@ -30,7 +32,8 @@ flowchart TD
     URLS --> GS[GoSpider]
     URLS --> HK[Hakrawler]
 
-    GAU & WB & KAT & GS & HK --> ALLURL[all_urls.txt]
+    GAU & WB & KAT & GS & HK --> URO[uro - Dedup/Filter]
+    URO --> ALLURL[all_urls.txt]
 
     ALLURL --> JS[JS Files]
     ALLURL --> PARAMS[Params]
@@ -38,11 +41,15 @@ flowchart TD
 
     JS --> JSAN[JS Analysis / Secrets]
     PARAMS --> ARJ[Arjun / Param Names]
+    PARAMS --> DALFOX[Dalfox - XSS]
     INT --> SWAG[Swagger]
     INT --> API[API]
     INT --> ADMIN[Admin]
     INT --> BACKUP[Backup]
     INT --> SENS[Sensitive Files]
+
+    ALLURL --> NUCLEI[Nuclei - CVEs / Misconfigs]
+    HTTPX --> CORSY[Corsy - CORS Misconfig]
 ```
 
 ---
@@ -83,7 +90,7 @@ cat subfinder.txt amass.txt assetfinder.txt findomain.txt chaos.txt \
     sublist3r/sublist3r.txt crt.txt 2>/dev/null | sort -u > all_subdomains.txt
 ```
 
-## Phase 2 — Resolve & Probe
+## Phase 2 — Resolve, Probe & Takeover Check
 
 ```bash
 dnsx -l all_subdomains.txt -resp -a -aaaa -cname -threads 25 -retry 5 -o resolved.txt
@@ -100,6 +107,16 @@ naabu -l hosts.txt -top-ports 1000 -rate 2000 -o ports.txt
 tlsx -l hosts.txt -san -cn -tls-version -jarm -o tls.txt
 ```
 
+**Subdomain takeover check** — flags dangling CNAMEs pointing to unclaimed services (S3, GitHub Pages, Heroku, etc.):
+```bash
+subzy run --targets all_subdomains.txt --hide_fails --verify_ssl -o subzy.txt
+```
+
+**Screenshots** — quick visual triage of what's alive:
+```bash
+gowitness scan file -f urls.txt --write-db -s ./screenshots
+```
+
 ## Phase 3 — Crawling
 
 ```bash
@@ -114,10 +131,13 @@ grep -rhoE 'https?://[^[:space:]"<>]+' gospider/ | sort -u > gospider_urls.txt
 cat urls.txt | hakrawler -d 4 -u -t 20 > hakrawler.txt
 ```
 
-**Merge:**
+**Merge + dedup:**
 ```bash
 cat gau.txt wayback.txt katana.txt hakrawler.txt gospider_urls.txt 2>/dev/null \
-    | sort -u > all_urls.txt
+    | sort -u > all_urls_raw.txt
+
+# uro strips redundant/near-duplicate URLs (same path, different param values)
+cat all_urls_raw.txt | uro > all_urls.txt
 ```
 
 ## Phase 4 — JS, Params & Interesting Paths
@@ -173,7 +193,24 @@ feroxbuster -u "https://TARGET_HOST/" \
     --user-agent 'Mozilla/5.0' -o ferox.txt
 ```
 
-## Phase 6 — Secrets
+## Phase 6 — Vulnerability Scanning
+
+**Nuclei** — template-based scan for known CVEs, exposures and misconfigs across all live hosts:
+```bash
+nuclei -l urls.txt -tags cve,exposure,misconfig,takeover -severity medium,high,critical -o nuclei.txt
+```
+
+**Dalfox** — reflected/DOM XSS on discovered parameters:
+```bash
+dalfox file params.txt -o dalfox.txt
+```
+
+**Corsy** — CORS misconfiguration check:
+```bash
+python3 corsy.py -i urls.txt -o corsy.txt
+```
+
+## Phase 7 — Secrets
 
 ```bash
 secretfinder -i js.txt -o cli > secrets.txt
@@ -185,13 +222,16 @@ secretfinder -i js.txt -o cli > secrets.txt
 
 ```
 subfinder, amass, sublist3r, assetfinder, findomain, chaos, jq,
-dnsx, httpx, naabu, tlsx, gau, waybackurls, katana, gospider,
-hakrawler, arjun, unfurl, secretfinder, ffuf, feroxbuster
+dnsx, httpx, naabu, tlsx, subzy, gowitness,
+gau, waybackurls, katana, gospider, hakrawler, uro,
+arjun, unfurl, ffuf, feroxbuster,
+nuclei, dalfox, corsy, secretfinder
 ```
 
 ## Notes
 
 - Fixes from the original version: `assetfinder` now loops per-domain (it doesn't read a file list), `crt.sh` output is now saved and merged into `all_subdomains.txt`, `js_raw.txt` is reset before each run to avoid duplicate content, and a broken `sed` reference that never matched anything was removed.
+- Added in this version: subdomain takeover check (subzy), screenshots (gowitness), URL dedup (uro), vulnerability scanning (nuclei), XSS scanning (dalfox), and CORS misconfiguration check (corsy).
 - Only run this against targets you're authorized to test (in-scope bug bounty programs or your own assets).
 
 ---
