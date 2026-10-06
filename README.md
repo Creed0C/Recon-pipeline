@@ -228,11 +228,10 @@ arjun, unfurl, ffuf, feroxbuster,
 nuclei, dalfox, corsy, secretfinder
 ```
 
-## Notes
-
-- Fixes from the original version: `assetfinder` now loops per-domain (it doesn't read a file list), `crt.sh` output is now saved and merged into `all_subdomains.txt`, `js_raw.txt` is reset before each run to avoid duplicate content, and a broken `sed` reference that never matched anything was removed.
-- Added in this version: subdomain takeover check (subzy), screenshots (gowitness), URL dedup (uro), vulnerability scanning (nuclei), XSS scanning (dalfox), and CORS misconfiguration check (corsy).
-- Only run this against targets you're authorized to test (in-scope bug bounty programs or your own assets).
-
 ---
 Part of [@Creed0C](https://github.com/Creed0C)'s bug bounty tooling.
+
+## Notes
+Danke für euren Besuch, ihr Jäger! 👋
+
+
